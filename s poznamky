@@ -1,0 +1,78 @@
+#include <OneWire.h>          // komunikace po one-wire sběrnici (pro DS18B20)
+#include <DallasTemperature.h> // ovladač pro teplotní čidlo DS18B20
+#include <LiquidCrystal_I2C.h> // ovladač pro LCD displej přes I2C
+#include <WiFi.h>              // WiFi funkce ESP32
+#include <WebServer.h>         // jednoduchý webový server
+
+#define SENSOR_PIN 4           // GPIO pin kde je připojeno datové čidlo DS18B20
+
+OneWire oneWire(SENSOR_PIN);           // one-wire sběrnice na pinu 4
+DallasTemperature ds18b20(&oneWire);   // čidlo připojeno na tuto sběrnici
+LiquidCrystal_I2C lcd(0x27, 20, 4);   // LCD na I2C adrese 0x27, 20 sloupců, 4 řádky
+                                       // pokud nefunguje, zkus 0x3F
+WebServer server(80);                  // webový server na portu 80 (standardní HTTP)
+
+float tempC = 0;  // globální proměnná pro teplotu — sdílena mezi loop() a webem
+
+void setup() {
+  Serial.begin(115200);  // spustí Serial Monitor rychlostí 115200 baud
+  ds18b20.begin();       // inicializuje čidlo
+
+  lcd.init();            // inicializuje LCD
+  lcd.backlight();       // zapne podsvícení LCD
+
+  // ESP32 vytvoří vlastní WiFi hotspot (Access Point)
+  // název sítě: ESP32-Teplomer, heslo: 12345678
+  WiFi.softAP("ESP32-Teplomer", "12345678");
+
+  // zobraz info na LCD hned po startu
+  lcd.setCursor(0, 0); lcd.print("WiFi: ESP32-Teplomer");
+  lcd.setCursor(0, 1); lcd.print("Heslo: 12345678     ");
+  lcd.setCursor(0, 2); lcd.print("IP: 192.168.4.1     ");
+  lcd.setCursor(0, 3); lcd.print("Teplota: mereni...  ");
+
+  // co se stane když někdo otevře http://192.168.4.1 v prohlížeči
+  server.on("/", []() {
+    // pokud čidlo nefunguje zobraz chybu, jinak teplotu
+    String msg = (tempC == DEVICE_DISCONNECTED_C) ? "Chyba cidla" : String(tempC, 1) + " &deg;C";
+
+    // sestaví HTML stránku — velké bílé číslo na černém pozadí
+    // meta refresh zajistí automatické obnovení každou sekundu
+    String html = "<html><head>"
+                  "<meta charset='UTF-8'>"
+                  "<meta http-equiv='refresh' content='1'>"
+                  "</head><body style='margin:0;display:flex;justify-content:center;"
+                  "align-items:center;height:100vh;background:#000;'>"
+                  "<p style='color:#fff;font-size:80px;font-family:sans-serif;'>"
+                  + msg + "</p>"
+                  "</body></html>";
+    server.send(200, "text/html; charset=utf-8", html);
+  });
+
+  server.begin();  // spustí webový server
+}
+
+void loop() {
+  server.handleClient();  // zpracuje příchozí požadavky z prohlížeče
+
+  ds18b20.requestTemperatures();           // pošle příkaz čidlu ať změří
+  tempC = ds18b20.getTempCByIndex(0);      // načte výsledek (index 0 = první čidlo)
+
+  // aktualizuj LCD každé 2 sekundy
+  lcd.setCursor(0, 0); lcd.print("WiFi: ESP32-Teplomer");
+  lcd.setCursor(0, 1); lcd.print("Heslo: 12345678     ");
+  lcd.setCursor(0, 2); lcd.print("IP: 192.168.4.1     ");
+  lcd.setCursor(0, 3);
+  if (tempC == DEVICE_DISCONNECTED_C) {
+    lcd.print("Teplota: CHYBA!     ");  // čidlo není připojeno nebo nefunguje
+  } else {
+    lcd.print("Teplota: ");
+    lcd.print(tempC, 1);         // 1 desetinné místo
+    lcd.print(" \xDF""C        "); // \xDF je znak ° v LCD znakové sadě
+  }
+
+  // vypiš teplotu do Serial Monitoru (Nástroje → Serial Monitor v Arduino IDE)
+  Serial.println("Teplota: " + String(tempC, 1) + " °C");
+
+  delay(2000);  // čekej 2 sekundy před dalším měřením
+}
