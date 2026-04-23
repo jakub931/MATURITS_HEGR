@@ -1,0 +1,67 @@
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>
+#include <WebServer.h>
+
+#define SENSOR_PIN 4
+
+OneWire oneWire(SENSOR_PIN);
+DallasTemperature ds18b20(&oneWire);
+LiquidCrystal_I2C lcd(0x27, 20, 4);  // zkus 0x3F pokud nefunguje
+WebServer server(80);
+
+float tempC = 0;
+
+void setup() {
+  Serial.begin(115200);
+  ds18b20.begin();
+
+  lcd.init();
+  lcd.backlight();
+
+  WiFi.softAP("ESP32-Teplomer", "12345678");
+
+  lcd.setCursor(0, 0); lcd.print("WiFi: ESP32-Teplomer");
+  lcd.setCursor(0, 1); lcd.print("Heslo: 12345678     ");
+  lcd.setCursor(0, 2); lcd.print("IP: 192.168.4.1     ");
+  lcd.setCursor(0, 3); lcd.print("Teplota: mereni...  ");
+
+  server.on("/", []() {
+    String msg = (tempC == DEVICE_DISCONNECTED_C) ? "Chyba cidla" : String(tempC, 1) + " &deg;C";
+    String html = "<html><head>"
+                  "<meta charset='UTF-8'>"
+                  "<meta http-equiv='refresh' content='1'>"
+                  "</head><body style='margin:0;display:flex;justify-content:center;"
+                  "align-items:center;height:100vh;background:#000;'>"
+                  "<p style='color:#fff;font-size:80px;font-family:sans-serif;'>"
+                  + msg + "</p>"
+                  "</body></html>";
+    server.send(200, "text/html; charset=utf-8", html);
+  });
+
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+
+  ds18b20.requestTemperatures();
+  tempC = ds18b20.getTempCByIndex(0);
+
+  lcd.setCursor(0, 0); lcd.print("WiFi: ESP32-Teplomer");
+  lcd.setCursor(0, 1); lcd.print("Heslo: 12345678     ");
+  lcd.setCursor(0, 2); lcd.print("IP: 192.168.4.1     ");
+  lcd.setCursor(0, 3);
+  if (tempC == DEVICE_DISCONNECTED_C) {
+    lcd.print("Teplota: CHYBA!     ");
+  } else {
+    lcd.print("Teplota: ");
+    lcd.print(tempC, 1);
+    lcd.print(" \xDF""C        ");
+  }
+
+  Serial.println("Teplota: " + String(tempC, 1) + " °C");
+
+  delay(2000);
+}
